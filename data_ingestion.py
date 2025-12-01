@@ -6,11 +6,11 @@ import numpy as np
 
 # 1. Configurar credenciais do banco (preencha com as suas informações)
 db_config = {
-    "host": "dataiesb.iesbtech.com.br",
-    "port": "5432",
-    "user": "Data_IESB",
-    "password": "Data_IESB",
-    "dbname": "Data_IESB"
+    "host": "DB_HOST",
+    "port": "DB_PORT",
+    "user": "DB_USER",
+    "password": "DB_PASSWORD",
+    "dbname": "DB_NAME"
 }
 
 # 2. Criar engine de conexão (mantido fora da função para reuso)
@@ -148,4 +148,5 @@ def carregar_e_combinar_dados():
 if __name__ == '__main__':
     # Este bloco só será executado se o script for rodado diretamente
     df_raw = carregar_e_combinar_dados()
+
     print(f"Ingestão e combinação concluídas. DataFrame (Long Format) pronto para processamento. Shape: {df_raw.shape}")
