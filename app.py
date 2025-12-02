@@ -54,62 +54,57 @@ def carregar_dados_eda():
 @st.cache_resource
 def carregar_modelos_serializados(df_dados_brutos):
     """
-    Carrega o modelo RFR e RECONSTRÓI o preprocessor no código (solução definitiva
-    contra o AttributeError de serialização).
-    
-    Args:
-        df_dados_brutos (pd.DataFrame): O DataFrame Long Format (df_long) contendo 
-                                        os dados brutos de EDA.
-                                        
-    Returns:
-        tuple: (model, preprocessor, features_finais_raw)
+    Carrega o modelo RFR e RECONSTRÓI o preprocessor no código (solução definitiva).
     """
-    # 1. Carregar o Modelo RFR Serializado
     try:
+        # 1. Carrega o modelo RFR (Mais estável)
         model = joblib.load(NOME_MODELO_SERIALIZADO)
     except Exception:
-        st.error(f"Erro ao carregar o modelo de regressão '{NOME_MODELO_SERIALIZADO}'.")
         return None, None, []
 
     # 2. DEFINIÇÃO DA LISTA DE FEATURES BRUTAS
-    
-    # Inferimos as colunas _per_capita que serão ajustadas, assumindo que são as que passaram
-    # pelo pipeline, pois o .pkl quebrado não pode ser lido.
-    features_finais_raw = [c for c in df_dados_brutos.columns if c.endswith('_per_capita')]
+    try:
+        # Tenta carregar a lista de features do preprocessor quebrado para ter os nomes exatos
+        preprocessor_dump = joblib.load("models/preprocessor_fimbra_scaled.pkl")
+        features_finais_raw = preprocessor_dump.transformers_[0][2]
+    except Exception:
+        # Se falhar, usa as colunas _per_capita que existem no DF Long
+        features_finais_raw = [c for c in df_dados_brutos.columns if c.endswith('_per_capita')]
+        
     
     # 3. Reconstruir o ColumnTransformer em código
     
-    # Define o pipeline de transformação (replica a lógica do data_processing.py)
+    # CORREÇÃO CRÍTICA: Fixar n_quantiles em um valor seguro (1000)
+    N_QUANTILES_SEGURO = 1000 
+    
+    # Pipeline Numérico
     transformador_numerico = Pipeline(steps=[
-        # QuantileTransformer: Essencial para mitigar outliers e assimetria.
-        # n_quantiles é definido como o tamanho do DF para robustez máxima.
-        ('quantile', QuantileTransformer(output_distribution='normal', n_quantiles=df_dados_brutos.shape[0], random_state=42)),
+        # CORREÇÃO: Usa n_quantiles fixo para resolver o erro matemático
+        ('quantile', QuantileTransformer(output_distribution='normal', 
+                                         n_quantiles=N_QUANTILES_SEGURO, 
+                                         random_state=42)),
         ('scaler', StandardScaler())
     ])
     
-    # Cria o ColumnTransformer (o preprocessor)
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', transformador_numerico, features_finais_raw) # Features a serem transformadas
+            ('num', transformador_numerico, features_finais_raw)
         ],
-        remainder='passthrough', # Mantém colunas DUMMY (ID_COL, NOTA_ALVO)
+        remainder='passthrough',
         n_jobs=-1
     )
     
-    # 4. Ajustar (FIT) o preprocessor aos dados (Solução contra o AttributeError)
+    # 4. Ajustar (FIT) o preprocessor aos dados brutos (df_long)
     try:
-        # Colunas que o preprocessor precisa ver para o FIT: FEATURES_FINAIS_RAW + [ID_COL, NOTA_ALVO]
+        # Prepara o DF para o FIT: FEATURES_FINAIS_RAW + [ID_COL, NOTA_ALVO]
         cols_para_fit = features_finais_raw + [ID_COL, NOTA_ALVO]
         
-        # O fit é feito no DF completo (df_dados_brutos) garantindo que NaNs sejam tratados com 0, 
-        # o que é consistente com a etapa fillna(0) antes do fit no pipeline.
+        # O fit é feito no DF completo e limpo de EDA
         preprocessor.fit(df_dados_brutos[cols_para_fit].fillna(0)) 
-        
     except Exception as e:
-        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor (FIT). A lista de colunas pode estar incompleta: {e}")
+        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor (FIT). Falha: {e}")
         return model, None, features_finais_raw
 
-    # 5. Retorno Final
     return model, preprocessor, features_finais_raw
 
 
@@ -497,4 +492,5 @@ with tabs[2]:
 
     else:
         st.warning("Modelos não encontrados. Execute o run_pipeline.py para treinar e serializar os modelos.")
+
 
