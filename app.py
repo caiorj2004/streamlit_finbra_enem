@@ -9,167 +9,145 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import joblib
-import os 
-from sklearn.preprocessing import StandardScaler, QuantileTransformer
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split 
-from sklearn.ensemble import RandomForestRegressor 
+import os # Necessário para checar caminhos de arquivo
 
 # Definir variáveis globais
 NOTA_ALVO = 'nota_media'
 ID_COL = 'cod_ibge'
 FEATURE_VALUE_COL = 'despesa_per_capita'
 FEATURE_NAME_COL = 'descricao_conta'
-# Nomes dos Artefatos Serializados
+# Nomes dos Artefatos Serializados (Definidos no pipeline)
 NOME_MODELO_SERIALIZADO = 'models/rfr_model.pkl'
-NOME_FEATURES_VIF = 'models/features_finais.pkl' # NOVO: Assumimos que a lista de features VIF será salva separadamente para reconstrução
-
-# NOME_PREPROCESSOR (REMOVIDO DA CARGA)
+NOME_PREPROCESSOR = 'models/preprocessor_fimbra_scaled.pkl'
 NOME_ARQUIVO_DF_LONG_EDA = 'models/df_eda_long_format.pkl'
 NOME_ARQUIVO_DF_FILTERS_EDA = 'models/df_eda_filters.pkl'
 
-# Listas de apoio necessárias para o EDA
-NOTAS_DISPONIVEIS = ['nota_media', 'nota_ciencias_da_natureza', 'nota_ciencias_humanas', 'nota_linguagens_e_codigos', 'nota_matematica', 'nota_redacao']
-FUNCOES_FIMBRA_PADRAO = ['Educação', 'Saúde', 'Urbanismo', 'Assistência Social', 'Cultura', 'Administração', 'Saneamento Básico']
-
 
 # ----------------------------------------
-# 2. CARREGAMENTO E RECONSTRUÇÃO DE ARTEFATOS
+# 2. CARREGAMENTO RÁPIDO DE ARTEFATOS (Pós-Pipeline)
 # ----------------------------------------
 
 @st.cache_data
 def carregar_dados_eda():
     """Carrega os DataFrames de EDA e Filtros diretamente do disco (.pkl)."""
     try:
+        # 1. Carrega o DF Long Format (usado para Boxplots, Histogramas e Filtro de Despesa)
         df_long_loaded = pd.read_pickle(NOME_ARQUIVO_DF_LONG_EDA)
+        
+        # 2. Carrega o DF de Filtros (usado para popular UF/Faixa Populacional)
         df_filters_loaded = pd.read_pickle(NOME_ARQUIVO_DF_FILTERS_EDA)
+        
         return df_long_loaded, df_filters_loaded
     
     except FileNotFoundError:
-        st.error("ERRO CRÍTICO: Arquivos de dados de EDA não encontrados! Execute o 'python run_pipeline.py' para gerar os arquivos .pkl na pasta 'models/'.")
+        st.error(
+            "ERRO CRÍTICO: Arquivos de dados de EDA não encontrados! "
+            "Execute o 'python run_pipeline.py' para gerar os arquivos .pkl na pasta 'models/'."
+        )
         return pd.DataFrame(), pd.DataFrame()
 
 
 @st.cache_resource
-def carregar_modelos_serializados(df_long):
-    """
-    Carrega o modelo RFR e RECONSTRÓI o preprocessor e ajusta (fit) nos dados EDA.
-    Isto resolve o erro de desserialização (AttributeError).
-    """
+def carregar_modelos_serializados():
+    """Carrega o modelo treinado (RFR) e o preprocessor para a Previsão."""
     try:
-        # Carrega o modelo RFR (artefato mais estável)
         model = joblib.load(NOME_MODELO_SERIALIZADO)
-    except Exception:
-        return None, None, []
-
-    # 1. Obter a lista de features que o modelo usou (Assumindo que está em df_long)
-    # Vamos usar as colunas de df_long que correspondem às FEATURES_DO_MODELO
-    
-    # Esta é a parte mais crítica, assume-se que as colunas que o modelo espera 
-    # são as colunas brutas do df_long.
-    # Como não temos a lista de VIF salva, vamos usar as colunas brutas do EDA:
-    features_finais_raw = [c for c in df_long.columns if c.endswith('_per_capita') and c not in ['Saneamento Básico_per_capita']] # Exemplo
-
-    # 2. Reconstruir o preprocessor (ColumnTransformer) em código
-    # Replicamos o pipeline de transformação: QuantileTransformer + StandardScaler
-    
-    # Pipeline Numérico
-    transformador_numerico = Pipeline(steps=[
-        ('quantile', QuantileTransformer(output_distribution='normal', n_quantiles=df_long.shape[0], random_state=42)),
-        ('scaler', StandardScaler())
-    ])
-    
-    # ColumnTransformer
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', transformador_numerico, features_finais_raw)
-        ],
-        # As 2 colunas passthrough (ID_COL, NOTA_ALVO) devem ser as últimas colunas da matriz de input.
-        remainder='passthrough', 
-        n_jobs=-1
-    )
-    
-    # 3. Ajustar (FIT) o preprocessor aos dados completos de EDA (resolvendo o problema)
-    try:
-        # Prepara o DF para o FIT: FEATURES_FINAIS_RAW + [ID_COL, NOTA_ALVO]
-        cols_para_fit = features_finais_raw + [ID_COL, NOTA_ALVO]
-        
-        # O fit é feito no DF completo e limpo de EDA
-        preprocessor.fit(df_long[cols_para_fit].dropna())
-    except Exception as e:
-        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor nos dados de EDA (FIT): {e}")
-        return model, None, features_finais_raw
-
-    return model, preprocessor, features_finais_raw
+        preprocessor = joblib.load(NOME_PREPROCESSOR)
+        return model, preprocessor
+    except FileNotFoundError:
+        return None, None
 
 
 # ----------------------------------------
-# 3. Funções de Visualização (Mantidas)
-# ----------------------------------------
-# ... (Manter as funções plot_histograma_notas, plot_boxplots_despesas_long, etc. aqui) ...
+# 3. Funções de Visualização e Lógica (Corrigidas para Retorno de Dados)
+# --------------------------------------------------------------------------------
 
+# Função para Histogramas de Nota Média (Univariada)
 def plot_histograma_notas(df, nota_col=NOTA_ALVO):
+    """Gera um histograma e retorna a figura."""
     fig_hist = px.histogram(df, x=nota_col, nbins=30, marginal="box", title="Distribuição da Nota Média (Mediana)")
     fig_hist.add_vline(x=df[nota_col].mean(), line_dash="dash", line_color="red", annotation_text="Média")
     return fig_hist
 
+# Função para Boxplots de Despesas (Formato Long) - CORRIGIDA
 def plot_boxplots_despesas_long(df, categorias):
+    """Gera boxplots, calcula e retorna as estatísticas descritivas (df_stats)."""
     df_filtrado = df[df[FEATURE_NAME_COL].isin(categorias)].copy()
+    
+    # Cálculo das estatísticas
     df_stats = df_filtrado.groupby(FEATURE_NAME_COL)[FEATURE_VALUE_COL].describe().transpose()
     
-    st.markdown("### Estatísticas Descritivas das Despesas Per Capita (R$)")
-    st.dataframe(df_stats, use_container_width=True)
-
-    fig_box = px.box(df_filtrado, x=FEATURE_NAME_COL, y=FEATURE_VALUE_COL, color=FEATURE_NAME_COL,
-                     title="Distribuição das Despesas Per Capita por Função Social (FIMBRA)",
-                     labels={FEATURE_NAME_COL: 'Função Social', FEATURE_VALUE_COL: 'Despesa Per Capita (R$)'},
-                     notched=True)
+    fig_box = px.box(
+        df_filtrado,
+        x=FEATURE_NAME_COL,
+        y=FEATURE_VALUE_COL,
+        color=FEATURE_NAME_COL,
+        title="Distribuição das Despesas Per Capita por Função Social (FIMBRA)",
+        labels={FEATURE_NAME_COL: 'Função Social', FEATURE_VALUE_COL: 'Despesa Per Capita (R$)'},
+        notched=True 
+    )
     fig_box.update_layout(xaxis_title="", yaxis_tickformat='$,.0f')
+    
+    # Retorna tanto a figura quanto o DataFrame de estatísticas
     return fig_box, df_stats 
 
+# Função para Heatmap (Requer Pivotagem local) - CORRIGIDA
 def plot_heatmap_correlacao_long_to_wide(df_long, categorias, nota_col=NOTA_ALVO):
+    """Cria um heatmap após pivotar e retorna a figura e a matriz de correlação."""
+    
+    # 1. Pré-processamento rápido local para o gráfico
     df_temp = df_long[df_long[FEATURE_NAME_COL].isin(categorias)].copy()
     df_pivot_data = df_temp[[ID_COL, nota_col, FEATURE_NAME_COL, FEATURE_VALUE_COL]].copy()
+    
     df_wide = df_pivot_data.pivot_table(index=ID_COL, columns=FEATURE_NAME_COL, values=FEATURE_VALUE_COL).fillna(0)
+    
+    # 2. Merge da nota média
     df_nota_unica = df_temp[[ID_COL, nota_col]].drop_duplicates(subset=[ID_COL]).set_index(ID_COL)
     df_corr_analysis = df_wide.join(df_nota_unica, how='inner').reset_index()
     
+    # 3. Cálculo e Visualização
     cols_analise = [nota_col] + df_wide.columns.tolist() 
     df_corr = df_corr_analysis.dropna(subset=cols_analise)[cols_analise]
     corr_matrix = df_corr.corr()
     
-    fig_heat = go.Figure(data=go.Heatmap(z=corr_matrix.values, x=corr_matrix.columns, y=corr_matrix.columns,
-                                        colorscale='RdBu', zmin=-1, zmax=1, texttemplate="%{z:.2f}"))
+    # REMOVIDO: st.dataframe(corr_matrix, use_container_width=True)
+    
+    fig_heat = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.columns,
+        colorscale='RdBu', 
+        zmin=-1, 
+        zmax=1,
+        texttemplate="%{z:.2f}"
+    ))
     fig_heat.update_layout(title='Mapa de Correlação: Despesas Per Capita (Seleção) vs. Nota Média ENEM', height=700)
     
+    # Retorna tanto a figura quanto a matriz de correlação
     return fig_heat, corr_matrix
-
-
+    
 # ----------------------------------------
 # 4. Layout Streamlit
 # ----------------------------------------
 st.set_page_config(layout="wide")
-st.title("Análise FIMBRA x ENEM")
+st.title("Análise FIMBRA x ENEM") # TÍTULO ATUALIZADO AQUI
 
 # Carrega DataFrames e Modelos
-model, preprocessor, FEATURES_SCALED_NOMES = carregar_modelos_serializados(df_long)
 df_long, df_enem_agg = carregar_dados_eda()
+model, preprocessor = carregar_modelos_serializados()
 
-# ... (Restante do código: Definições, Abas, etc.)
-# Note: A lógica deve ser ajustada para usar a lista FEATURES_SCALED_NOMES que agora vem da função de carregamento.
-
-# Variáveis de apoio
+# Definições de filtros globais
 CATEGORIAS_PADRAO = ['Educação', 'Saúde', 'Urbanismo', 'Assistência Social', 'Cultura', 'Administração', 'Saneamento Básico']
-FEATURES_DO_MODELO = [c.replace('_per_capita', '') for c in FEATURES_SCALED_NOMES] # Nomes SEM sufixo para widgets
+FEATURES_DO_MODELO = [c.replace('_per_capita', '') for c in preprocessor.transformers_[0][2]] if preprocessor else []
+FEATURES_SCALED_NOMES = preprocessor.transformers_[0][2] if preprocessor else []
 
+# ABAS ATUALIZADAS
 tabs = st.tabs(["Apresentação e Contexto", "Análise Exploratória (EDA)", "Modelagem e Predição"])
 
 # -------------------
 # 4a. Aba Apresentação
 # -------------------
 with tabs[0]:
-    # ... (Conteúdo da apresentação) ...
     st.header("Contexto e Metodologia: Gastos Sociais e o Desempenho Escolar")
     
     st.markdown("""
@@ -198,27 +176,116 @@ with tabs[0]:
     * **Modelagem e Amostragem:** Foram treinados modelos de **Regressão Linear (OLS)**, **Gradient Boosting Regressor (GBR)** e **Random Forest Regressor (RFR)**. Para evitar vieses de amostragem, foi utilizada a **Amostragem Estratificada** na divisão dos dados (70% Treino, 15% Validação, 15% Teste).
     """)
 
-
 # -------------------
 # 4b. Aba Análise Exploratória (EDA)
 # -------------------
+# Listas de apoio necessárias para o EDA (Definidas no escopo global do app.py)
+NOTAS_DISPONIVEIS = ['nota_media', 'nota_ciencias_da_natureza', 'nota_ciencias_humanas', 'nota_linguagens_e_codigos', 'nota_matematica', 'nota_redacao']
+FUNCOES_FIMBRA_PADRAO = ['Educação', 'Saúde', 'Urbanismo', 'Assistência Social', 'Cultura', 'Administração', 'Saneamento Básico']
+
+# ----------------------------------------------------------------------
+# FUNÇÃO AUXILIAR: PIVOTAGEM LOCAL (Cria o DF Wide necessário para Rankings)
+# ----------------------------------------------------------------------
+@st.cache_data
+def criar_df_wide_para_ranking(df_long):
+    """
+    Cria um DataFrame Wide (Notas + Todas Despesas Per Capita) para rankings rápidos.
+    A pivotagem é feita usando a lista completa de funções (DF Long).
+    """
+    # 1. Lista DINÂMICA de todas as funções FIMBRA disponíveis no DF Long
+    funcoes_completas = df_long[FEATURE_NAME_COL].unique().tolist()
+    funcoes_completas = [f for f in funcoes_completas if isinstance(f, str) and f.strip() != '']
+    
+    # 2. Pivotagem das despesas
+    df_wide_features = df_long.pivot_table(
+        index=ID_COL, 
+        columns=FEATURE_NAME_COL, 
+        values=FEATURE_VALUE_COL
+    ).fillna(0).reset_index()
+
+    # 3. Renomeia e adiciona sufixo _per_capita
+    # A lista de colunas que serão renomeadas deve ser baseada no DF Wide pivotado
+    cols_to_rename = [c for c in df_wide_features.columns if c not in [ID_COL] + NOTAS_DISPONIVEIS]
+    new_cols = {col: f'{col}_per_capita' for col in cols_to_rename}
+    df_wide_features.rename(columns=new_cols, inplace=True)
+    
+    # 4. Merge com as Notas/Detalhes do DF Long (para ter nome/UF/Notas)
+    cols_detalhes = [ID_COL, 'nome_municipio', 'sigla_uf', 'faixa_populacao'] + NOTAS_DISPONIVEIS
+    df_detalhes_unique = df_long.drop_duplicates(subset=[ID_COL])[cols_detalhes].set_index(ID_COL)
+    
+    df_wide_ranking = df_wide_features.set_index(ID_COL).join(df_detalhes_unique, how='inner').reset_index()
+    
+    return df_wide_ranking
+
+# ----------------------------------------------------------------------
+# CONTEÚDO DA ABA EDA
+# ----------------------------------------------------------------------
+
+# Listas de apoio necessárias para o EDA (Definidas no escopo global do app.py)
+NOTAS_DISPONIVEIS = ['nota_media', 'nota_ciencias_da_natureza', 'nota_ciencias_humanas', 'nota_linguagens_e_codigos', 'nota_matematica', 'nota_redacao']
+FUNCOES_FIMBRA_PADRAO = ['Educação', 'Saúde', 'Urbanismo', 'Assistência Social', 'Cultura', 'Administração', 'Saneamento Básico']
+
+# ----------------------------------------------------------------------
+# FUNÇÃO AUXILIAR: PIVOTAGEM LOCAL (Cria o DF Wide necessário para Rankings)
+# ----------------------------------------------------------------------
+@st.cache_data
+def criar_df_wide_para_ranking(df_long):
+    """
+    Cria um DataFrame Wide (Notas + Todas Despesas Per Capita) para rankings rápidos.
+    """
+    # 1. Lista DINÂMICA de todas as funções FIMBRA disponíveis no DF Long
+    funcoes_completas = df_long[FEATURE_NAME_COL].unique().tolist()
+    funcoes_completas = [f for f in funcoes_completas if isinstance(f, str) and f.strip() != '']
+    
+    # 2. Pivotagem das despesas
+    df_wide_features = df_long.pivot_table(
+        index=ID_COL, 
+        columns=FEATURE_NAME_COL, 
+        values=FEATURE_VALUE_COL
+    ).fillna(0).reset_index()
+
+    # 3. Renomeia e adiciona sufixo _per_capita
+    cols_to_rename = [c for c in df_wide_features.columns if c not in [ID_COL] + NOTAS_DISPONIVEIS]
+    new_cols = {col: f'{col}_per_capita' for col in cols_to_rename}
+    df_wide_features.rename(columns=new_cols, inplace=True)
+    
+    # 4. Merge com as Notas/Detalhes do DF Long (para ter nome/UF/Notas)
+    cols_detalhes = [ID_COL, 'nome_municipio', 'sigla_uf', 'faixa_populacao'] + NOTAS_DISPONIVEIS
+    df_detalhes_unique = df_long.drop_duplicates(subset=[ID_COL])[cols_detalhes].set_index(ID_COL)
+    
+    df_wide_ranking = df_wide_features.set_index(ID_COL).join(df_detalhes_unique, how='inner').reset_index()
+    
+    return df_wide_ranking
+
+# Listas de apoio necessárias para o EDA (Assumidas como definidas no escopo global)
+NOTAS_DISPONIVEIS = ['nota_media', 'nota_ciencias_da_natureza', 'nota_ciencias_humanas', 'nota_linguagens_e_codigos', 'nota_matematica', 'nota_redacao']
+FUNCOES_FIMBRA_PADRAO = ['Educação', 'Saúde', 'Urbanismo', 'Assistência Social', 'Cultura', 'Administração', 'Saneamento Básico']
+# NOTA_ALVO também é assumida como 'nota_media' ou similar
+
+# ----------------------------------------------------------------------
+# CONTEÚDO DA ABA EDA (Atualizado)
+# ----------------------------------------------------------------------
+
 with tabs[1]:
     if not df_long.empty:
         st.header("Análise Exploratória de Dados (EDA)")
         
+        # Cria o DF Wide para rankings, aplicando os filtros do usuário
         df_wide_base = criar_df_wide_para_ranking(df_long)
         
         # 1. Filtros de Agregação (UF e Faixa Populacional)
         st.subheader("Filtros de Agregação")
         col_uf, col_pop = st.columns(2)
         
+        # Filtro UF
         ufs = sorted(df_enem_agg['sigla_uf'].dropna().unique())
         uf_selected = col_uf.selectbox("Selecionar UF", options=["Todos"] + list(ufs), key="eda_uf")
         
+        # Filtro População
         faixas_pop = sorted(df_enem_agg['faixa_populacao'].dropna().unique())
         pop_selected = col_pop.selectbox("Selecionar Faixa Populacional", options=["Todas"] + list(faixas_pop), key="eda_pop")
         
-        # Aplicar filtros
+        # Aplicar filtros ao DF Long (para Boxplots) e ao DF Wide (para Rankings)
         df_filter_long = df_long.copy()
         df_filter_wide = df_wide_base.copy()
         
@@ -232,10 +299,13 @@ with tabs[1]:
 
         st.markdown("---")
         
+        # =====================================================================
         # SEÇÃO DE NOTAS E RANKING ENEM
+        # =====================================================================
         st.subheader("Análise de Desempenho e Ranking ENEM")
         col_dist, col_rank = st.columns(2)
         
+        # FILTRO DINÂMICO DE NOTA
         nota_selecionada = col_dist.selectbox("Selecionar Nota para Distribuição e Ranking", options=NOTAS_DISPONIVEIS, key="nota_alvo_select")
         
         with col_dist:
@@ -265,19 +335,35 @@ with tabs[1]:
                 top10_enem = df_filter_wide.nsmallest(10, nota_selecionada)
                 title_top = f"Top 10 Municípios por {nota_selecionada.replace('_',' ').title()} (Menores)"
 
-            fig_bar_top10 = px.bar(top10_enem.sort_values(nota_selecionada, ascending=True), x=nota_selecionada, y='nome_municipio', orientation='h', title=title_top, labels={nota_selecionada:'Nota', 'nome_municipio':'Município'}, color_discrete_sequence=['#1f77b4'])
+            fig_bar_top10 = px.bar(
+                top10_enem.sort_values(nota_selecionada, ascending=True),
+                x=nota_selecionada,
+                y='nome_municipio',
+                orientation='h',
+                title=title_top,
+                labels={nota_selecionada:'Nota', 'nome_municipio':'Município'},
+                color_discrete_sequence=['#1f77b4']
+            )
             st.plotly_chart(fig_bar_top10, use_container_width=True)
 
 
         st.markdown("---")
         
+        # =====================================================================
         # SEÇÃO DE DESPESAS FIMBRA E COMPOSIÇÃO
+        # =====================================================================
         st.subheader("Análise de Despesas Per Capita (FIMBRA)")
+        
         col_desp_filter, col_desp_rank = st.columns(2)
         
+        # Lista de colunas FIMBRA_per_capita disponíveis no DF Wide
         features_fimbra_wide = [c for c in df_filter_wide.columns if c.endswith('_per_capita')]
         
-        desp_selected = col_desp_filter.selectbox("Selecionar Função para Ranking e Distribuição:", options=features_fimbra_wide, index=features_fimbra_wide.index('Educação_per_capita') if 'Educação_per_capita' in features_fimbra_wide else 0, key="fimbra_alvo_select")
+        # 1. Filtro Dinâmico para Despesas (para Ranking FIMBRA)
+        desp_selected = col_desp_filter.selectbox("Selecionar Função para Ranking e Distribuição:", 
+                                                  options=features_fimbra_wide, 
+                                                  index=features_fimbra_wide.index('Educação_per_capita') if 'Educação_per_capita' in features_fimbra_wide else 0, 
+                                                  key="fimbra_alvo_select")
         
         with col_desp_filter:
             # Boxplot e Estatísticas da despesa selecionada
@@ -295,6 +381,7 @@ with tabs[1]:
             # Ranking TOP 10 FIMBRA
             top_bottom_desp = st.radio("Selecionar Ranking (FIMBRA):", ['Maiores Gastos', 'Menores Gastos'], index=0, horizontal=True, key="rank_fimbra_type")
             
+            # Filtra o DF Wide para EXCLUIR municípios com valor 0 para a variável selecionada
             df_ranking_desp = df_filter_wide[df_filter_wide[desp_selected] > 0].copy() 
 
             if top_bottom_desp == 'Maiores Gastos':
@@ -304,7 +391,15 @@ with tabs[1]:
                 top10_desp = df_ranking_desp.nsmallest(10, desp_selected)
                 title_top_desp = f"Top 10 Municípios por {desp_selected.replace('_',' ').title()} (Menores)"
 
-            fig_bar_top10_desp = px.bar(top10_desp.sort_values(desp_selected, ascending=True), x=desp_selected, y='nome_municipio', orientation='h', title=title_top_desp, labels={desp_selected:'Despesa R$', 'nome_municipio':'Município'}, color_discrete_sequence=['#2ca02c'])
+            fig_bar_top10_desp = px.bar(
+                top10_desp.sort_values(desp_selected, ascending=True),
+                x=desp_selected,
+                y='nome_municipio',
+                orientation='h',
+                title=title_top_desp,
+                labels={desp_selected:'Despesa R$', 'nome_municipio':'Município'},
+                color_discrete_sequence=['#2ca02c']
+            )
             st.plotly_chart(fig_bar_top10_desp, use_container_width=True)
             
             # Composição de Gastos
@@ -317,40 +412,68 @@ with tabs[1]:
             composicao_perc = (composicao / soma_total_filtrada * 100).sort_values(ascending=False).reset_index()
             composicao_perc.columns = ['Função', 'Percentual']
             
-            fig_pie_comp = px.pie(composicao_perc.head(5), names='Função', values='Percentual', title="Top 5 Funções que Mais Consomem o Gasto Total", color_discrete_sequence=px.colors.sequential.Greens_r)
+            # Gráfico de Pizza para Composição
+            fig_pie_comp = px.pie(
+                composicao_perc.head(5), 
+                names='Função',
+                values='Percentual',
+                title="Top 5 Funções que Mais Consomem o Gasto Total", 
+                color_discrete_sequence=px.colors.sequential.Greens_r
+            )
             st.plotly_chart(fig_pie_comp, use_container_width=True)
 
         st.markdown("---")
         
+        # =====================================================================
         # SEÇÃO DE CORRELAÇÃO MULTIVARIADA E BIVARIADA (Atualizada)
+        # =====================================================================
         st.subheader("Análise de Correlação e Dispersão")
 
         col_scatter_viz, col_heatmap_viz = st.columns(2)
         
+        # Lista de todas as colunas FIMBRA_per_capita disponíveis no DF Wide
         features_fimbra_wide_all = [c for c in df_filter_wide.columns if c.endswith('_per_capita')]
         
         with col_scatter_viz:
             st.markdown("#### Dispersão Bivariada (Feature vs. Nota Média)")
             
-            eixo_x_scatter = st.selectbox("Selecionar Função:", options=features_fimbra_wide_all, index=features_fimbra_wide_all.index('Educação_per_capita') if 'Educação_per_capita' in features_fimbra_wide_all else 0, key="scatter_feature_select")
+            # Filtro de Seleção para o Gráfico de Dispersão
+            eixo_x_scatter = st.selectbox(
+                "Selecionar Função:",
+                options=features_fimbra_wide_all,
+                index=features_fimbra_wide_all.index('Educação_per_capita') if 'Educação_per_capita' in features_fimbra_wide_all else 0,
+                key="scatter_feature_select"
+            )
             
+            # --- 1. GRÁFICO DE DISPERSÃO BIVARIADO ---
+            # NOTA_ALVO é assumida como o eixo Y (nota_media)
             corr_value = df_filter_wide[[eixo_x_scatter, NOTA_ALVO]].corr().iloc[0, 1]
             
-            fig_scatter = px.scatter(df_filter_wide, x=eixo_x_scatter, y=NOTA_ALVO, opacity=0.6, trendline="ols", hover_data=['nome_municipio', 'sigla_uf'], title=f'Nota Média vs. {eixo_x_scatter.replace("_"," ").title()}', labels={eixo_x_scatter: eixo_x_scatter.replace("_"," ").title(), NOTA_ALVO:'Nota Média ENEM'})
+            fig_scatter = px.scatter(
+                df_filter_wide,
+                x=eixo_x_scatter,
+                y=NOTA_ALVO,
+                opacity=0.6,
+                trendline="ols", # Adiciona linha de regressão
+                hover_data=['nome_municipio', 'sigla_uf'],
+                title=f'Nota Média vs. {eixo_x_scatter.replace("_"," ").title()}',
+                labels={eixo_x_scatter: eixo_x_scatter.replace("_"," ").title(), NOTA_ALVO:'Nota Média ENEM'}
+            )
             
             st.plotly_chart(fig_scatter, use_container_width=True)
             st.info(f"Correlação de Pearson: **r = {corr_value:.3f}**")
 
         with col_heatmap_viz:
+            # --- 2. HEATMAP (Mantido - Gráfico) ---
             st.markdown("#### Mapa de Correlação (Visão Geral)")
             
+            # Chama a função que retorna a figura e a matriz (mas só a figura é exibida)
             fig_heat, corr_matrix = plot_heatmap_correlacao_long_to_wide(df_filter_long, FUNCOES_FIMBRA_PADRAO)
             
             st.plotly_chart(fig_heat, use_container_width=True)
 
     else:
         st.warning("Não foi possível carregar os dados de EDA. Verifique se o pipeline foi executado e se os arquivos .pkl estão na pasta 'models/'.")
-
 
 # -------------------
 # 4c. Aba Modelagem e Predição
@@ -361,7 +484,8 @@ with tabs[2]:
     if model and preprocessor:
         st.success("Modelos RFR e Pré-processador carregados com sucesso.")
         
-        # --- DISCUSSÃO DOS MODELOS E CONTEXTUALIZAÇÃO ---
+        # --- NOVO CONTEÚDO: DISCUSSÃO DOS MODELOS E CONTEXTUALIZAÇÃO ---
+        
         st.subheader("Resultados Chave do Modelo (RFR Vencedor)")
         
         st.markdown("""
@@ -388,7 +512,7 @@ with tabs[2]:
         
         # Criar a estrutura de input
         inputs = {}
-        todas_as_features_do_modelo = FEATURES_SCALED_NOMES
+        todas_as_features_do_modelo = FEATURES_SCALED_NOMES 
         input_cols = st.columns(3)
         
         for i, feature_full_name in enumerate(todas_as_features_do_modelo):
@@ -396,7 +520,6 @@ with tabs[2]:
             
             # 1. Tentar obter o valor mediano BRUTO do DF Long (Para valor default realista)
             try:
-                # O df_long está no formato LONG. Filtramos pelo nome bruto da função
                 default_value = float(df_long[df_long[FEATURE_NAME_COL] == feature_name_sem_sufixo][FEATURE_VALUE_COL].median())
             except:
                 default_value = 100.0 # Valor padrão
@@ -414,7 +537,7 @@ with tabs[2]:
         if predict_button:
             
             # 1. CONSTRUÇÃO ROBUSTA DO DATAFRAME DE INPUT (28 colunas)
-            todas_features_com_sufixo = FEATURES_SCALED_NOMES
+            todas_features_com_sufixo = FEATURES_SCALED_NOMES 
             data_para_preprocessor = {}
             
             # 1.1. Preenche TODAS as 26 FEATURES BRUTAS (Input Real ou Default Zero)
@@ -432,8 +555,7 @@ with tabs[2]:
             # 2. REORDENAR E TRANSFORMAR
             ORDEM_ESPERADA_PELO_PREPROCESSOR = todas_features_com_sufixo + [ID_COL, NOTA_ALVO]
             input_df_final = input_df_final[ORDEM_ESPERADA_PELO_PREPROCESSOR]
-            
-            input_transformed = preprocessor.transform(input_df_final) 
+            input_transformed = preprocessor.transform(input_df_final)
             
             # 3. PREVISÃO
             X_predict = input_transformed[:, :-2] 
