@@ -54,47 +54,62 @@ def carregar_dados_eda():
 @st.cache_resource
 def carregar_modelos_serializados(df_dados_brutos):
     """
-    Carrega o modelo RFR e RECONSTRÓI o preprocessor no código (solução definitiva).
+    Carrega o modelo RFR e RECONSTRÓI o preprocessor no código (solução definitiva
+    contra o AttributeError de serialização).
+    
+    Args:
+        df_dados_brutos (pd.DataFrame): O DataFrame Long Format (df_long) contendo 
+                                        os dados brutos de EDA.
+                                        
+    Returns:
+        tuple: (model, preprocessor, features_finais_raw)
     """
+    # 1. Carregar o Modelo RFR Serializado
     try:
-        # 1. Carrega o modelo RFR (Mais estável)
         model = joblib.load(NOME_MODELO_SERIALIZADO)
     except Exception:
+        st.error(f"Erro ao carregar o modelo de regressão '{NOME_MODELO_SERIALIZADO}'.")
         return None, None, []
 
-    # 2. DEFINIÇÃO E EXTRAÇÃO DA LISTA DE FEATURES (Sem depender do preprocessor quebrado)
+    # 2. DEFINIÇÃO DA LISTA DE FEATURES BRUTAS
     
-    # Aqui, você precisaria de uma lista salva no pipeline. Como ela não existe, 
-    # inferimos as 26 colunas de despesa do DF Long para o FIT:
+    # Inferimos as colunas _per_capita que serão ajustadas, assumindo que são as que passaram
+    # pelo pipeline, pois o .pkl quebrado não pode ser lido.
     features_finais_raw = [c for c in df_dados_brutos.columns if c.endswith('_per_capita')]
     
     # 3. Reconstruir o ColumnTransformer em código
     
-    # Replicamos o pipeline de transformação: QuantileTransformer + StandardScaler
+    # Define o pipeline de transformação (replica a lógica do data_processing.py)
     transformador_numerico = Pipeline(steps=[
+        # QuantileTransformer: Essencial para mitigar outliers e assimetria.
+        # n_quantiles é definido como o tamanho do DF para robustez máxima.
         ('quantile', QuantileTransformer(output_distribution='normal', n_quantiles=df_dados_brutos.shape[0], random_state=42)),
         ('scaler', StandardScaler())
     ])
     
+    # Cria o ColumnTransformer (o preprocessor)
     preprocessor = ColumnTransformer(
         transformers=[
-            ('num', transformador_numerico, features_finais_raw)
+            ('num', transformador_numerico, features_finais_raw) # Features a serem transformadas
         ],
-        remainder='passthrough',
+        remainder='passthrough', # Mantém colunas DUMMY (ID_COL, NOTA_ALVO)
         n_jobs=-1
     )
     
-    # 4. Ajustar (FIT) o preprocessor aos dados brutos (df_long)
+    # 4. Ajustar (FIT) o preprocessor aos dados (Solução contra o AttributeError)
     try:
-        # Prepara o DF para o FIT: FEATURES_FINAIS_RAW + [ID_COL, NOTA_ALVO]
+        # Colunas que o preprocessor precisa ver para o FIT: FEATURES_FINAIS_RAW + [ID_COL, NOTA_ALVO]
         cols_para_fit = features_finais_raw + [ID_COL, NOTA_ALVO]
         
-        # O fit é feito no DF completo e limpo de EDA
+        # O fit é feito no DF completo (df_dados_brutos) garantindo que NaNs sejam tratados com 0, 
+        # o que é consistente com a etapa fillna(0) antes do fit no pipeline.
         preprocessor.fit(df_dados_brutos[cols_para_fit].fillna(0)) 
+        
     except Exception as e:
-        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor (FIT). Colunas: {e}")
+        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor (FIT). A lista de colunas pode estar incompleta: {e}")
         return model, None, features_finais_raw
 
+    # 5. Retorno Final
     return model, preprocessor, features_finais_raw
 
 
@@ -482,3 +497,4 @@ with tabs[2]:
 
     else:
         st.warning("Modelos não encontrados. Execute o run_pipeline.py para treinar e serializar os modelos.")
+
