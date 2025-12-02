@@ -23,7 +23,6 @@ FEATURE_VALUE_COL = 'despesa_per_capita'
 FEATURE_NAME_COL = 'descricao_conta'
 # Nomes dos Artefatos Serializados
 NOME_MODELO_SERIALIZADO = 'models/rfr_model.pkl'
-NOME_PREPROCESSOR = 'models/preprocessor_fimbra_scaled.pkl'
 NOME_ARQUIVO_DF_LONG_EDA = 'models/df_eda_long_format.pkl'
 NOME_ARQUIVO_DF_FILTERS_EDA = 'models/df_eda_filters.pkl'
 
@@ -33,7 +32,7 @@ FUNCOES_FIMBRA_PADRAO = ['Educação', 'Saúde', 'Urbanismo', 'Assistência Soci
 
 
 # ----------------------------------------
-# 2. CARREGAMENTO E RECONSTRUÇÃO DE ARTEFATOS
+# 2. CARREGAMENTO RÁPIDO DE ARTEFATOS (Pós-Pipeline)
 # ----------------------------------------
 
 @st.cache_data
@@ -55,26 +54,21 @@ def carregar_dados_eda():
 @st.cache_resource
 def carregar_modelos_serializados(df_dados_brutos):
     """
-    Carrega o modelo RFR e RECONSTRÓI o preprocessor e ajusta (fit) nos dados EDA.
-    Isto resolve o erro de desserialização (AttributeError).
+    Carrega o modelo RFR e RECONSTRÓI o preprocessor no código (solução definitiva).
     """
     try:
-        # Carrega o modelo (Mais estável)
+        # 1. Carrega o modelo RFR (Mais estável)
         model = joblib.load(NOME_MODELO_SERIALIZADO)
     except Exception:
         return None, None, []
 
-    # 1. Definir features brutas (LISTA FINAL DE VIF)
-    try:
-        # Tenta carregar a lista de features do preprocessor quebrado para ter os nomes exatos
-        preprocessor_dump = joblib.load("models/preprocessor_fimbra_scaled.pkl")
-        features_finais_raw = preprocessor_dump.transformers_[0][2]
-    except Exception:
-        # Se falhar, assume-se que todas as colunas _per_capita do DF foram as usadas
-        features_finais_raw = [c for c in df_dados_brutos.columns if c.endswith('_per_capita')]
-        
+    # 2. DEFINIÇÃO E EXTRAÇÃO DA LISTA DE FEATURES (Sem depender do preprocessor quebrado)
     
-    # 2. Reconstruir o ColumnTransformer em código (SOLUÇÃO CONTRA ATRIBUTO FALTANTE)
+    # Aqui, você precisaria de uma lista salva no pipeline. Como ela não existe, 
+    # inferimos as 26 colunas de despesa do DF Long para o FIT:
+    features_finais_raw = [c for c in df_dados_brutos.columns if c.endswith('_per_capita')]
+    
+    # 3. Reconstruir o ColumnTransformer em código
     
     # Replicamos o pipeline de transformação: QuantileTransformer + StandardScaler
     transformador_numerico = Pipeline(steps=[
@@ -90,7 +84,7 @@ def carregar_modelos_serializados(df_dados_brutos):
         n_jobs=-1
     )
     
-    # 3. Ajustar (FIT) o preprocessor aos dados brutos (df_long)
+    # 4. Ajustar (FIT) o preprocessor aos dados brutos (df_long)
     try:
         # Prepara o DF para o FIT: FEATURES_FINAIS_RAW + [ID_COL, NOTA_ALVO]
         cols_para_fit = features_finais_raw + [ID_COL, NOTA_ALVO]
@@ -98,7 +92,7 @@ def carregar_modelos_serializados(df_dados_brutos):
         # O fit é feito no DF completo e limpo de EDA
         preprocessor.fit(df_dados_brutos[cols_para_fit].fillna(0)) 
     except Exception as e:
-        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor (FIT). A lista de colunas pode estar errada: {e}")
+        st.error(f"Erro CRÍTICO ao REAJUSTAR o preprocessor (FIT). Colunas: {e}")
         return model, None, features_finais_raw
 
     return model, preprocessor, features_finais_raw
@@ -107,8 +101,7 @@ def carregar_modelos_serializados(df_dados_brutos):
 # ----------------------------------------
 # 3. Funções de Visualização e Manipulação
 # ----------------------------------------
-
-# FUNÇÃO AUXILIAR: PIVOTAGEM LOCAL (Cria o DF Wide necessário para Rankings)
+# ... (Funções plot_histograma_notas, plot_boxplots_despesas_long, etc. inseridas aqui) ...
 @st.cache_data
 def criar_df_wide_para_ranking(df_long):
     """
@@ -182,10 +175,8 @@ def plot_heatmap_correlacao_long_to_wide(df_long, categorias, nota_col=NOTA_ALVO
 st.set_page_config(layout="wide")
 st.title("Análise FIMBRA x ENEM")
 
-# 1. Carrega DataFrames de EDA (df_long é criado aqui)
+# Carrega DataFrames e Modelos
 df_long, df_enem_agg = carregar_dados_eda()
-
-# 2. Carrega Modelos (Usando df_long como argumento)
 model, preprocessor, FEATURES_SCALED_NOMES = carregar_modelos_serializados(df_long) 
 
 
@@ -386,8 +377,7 @@ with tabs[1]:
 with tabs[2]:
     st.header("Modelagem Preditiva e Previsão Interativa")
     
-    # OBS: O erro de serialização ainda pode ocorrer nesta linha.
-    if model and preprocessor: 
+    if model and preprocessor:
         st.success("Modelos RFR e Pré-processador carregados com sucesso.")
         
         # --- DISCUSSÃO DOS MODELOS E CONTEXTUALIZAÇÃO ---
