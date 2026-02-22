@@ -16,6 +16,7 @@ O projeto foi estruturado utilizando princípios de **MLOps**, dividindo a lógi
 * **Processamento (`data_processing.py`):** ETL avançado incluindo pivotagem de dados (Long para Wide), tratamento de valores ausentes, análise de multicolinearidade (**VIF**) e padronização robusta com `QuantileTransformer`.
 * **Modelagem (`modeling.py`):** Treinamento comparativo entre modelos de regressão (**OLS**, **Gradient Boosting** e **Random Forest**) com amostragem estratificada.
 * **Pipeline (`run_pipeline.py`):** Orquestração completa do fluxo, desde o dado bruto até a serialização do modelo vencedor.
+* **Dashboard (app.py)**: Interface em Streamlit para visualização de correlações e predições em tempo real.
 
 ## 📊 Metodologia de Dados
 
