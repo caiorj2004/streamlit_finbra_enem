@@ -154,7 +154,7 @@ def plot_boxplots_despesas_long(df, categorias):
     st.dataframe(df_stats, use_container_width=True)
 
     fig_box = px.box(df_filtrado, x=FEATURE_NAME_COL, y=FEATURE_VALUE_COL, color=FEATURE_NAME_COL,
-                     title="Distribuição das Despesas Per Capita por Função Social (FIMBRA)",
+                     title="Distribuição das Despesas Per Capita por Função Social (FINBRA)",
                      labels={FEATURE_NAME_COL: 'Função Social', FEATURE_VALUE_COL: 'Despesa Per Capita (R$)'},
                      notched=True)
     fig_box.update_layout(xaxis_title="", yaxis_tickformat='$,.0f')
@@ -182,7 +182,7 @@ def plot_heatmap_correlacao_long_to_wide(df_long, categorias, nota_col=NOTA_ALVO
 # 4. Layout Streamlit
 # ----------------------------------------
 st.set_page_config(layout="wide")
-st.title("Análise FIMBRA x ENEM")
+st.title("Análise FINBRA x ENEM")
 
 # Carrega DataFrames e Modelos
 df_long, df_enem_agg = carregar_dados_eda()
@@ -203,7 +203,7 @@ with tabs[0]:
     st.markdown("""
     ### Objetivo e Problema de Pesquisa
     
-    Este painel de dados tem como objetivo central analisar a **associação estatística** entre os **gastos públicos municipais em diversas funções sociais** (base FIMBRA 2023) e o **desempenho escolar agregado** de jovens (15-19 anos) no ENEM 2023.
+    Este painel de dados tem como objetivo central analisar a **associação estatística** entre os **gastos públicos municipais em diversas funções sociais** (base FINBRA 2023) e o **desempenho escolar agregado** de jovens (15-19 anos) no ENEM 2023.
     
     O problema de pesquisa é quantificar em que medida o investimento público em setores mediadores — como Saúde, Saneamento e Assistência Social — impacta a nota média do ENEM, e quais funções, para além da Educação direta, são os preditores mais relevantes.
     """)
@@ -300,7 +300,7 @@ with tabs[1]:
         st.markdown("---")
         
         # SEÇÃO DE DESPESAS FIMBRA E COMPOSIÇÃO
-        st.subheader("Análise de Despesas Per Capita (FIMBRA)")
+        st.subheader("Análise de Despesas Per Capita (FINBRA)")
         col_desp_filter, col_desp_rank = st.columns(2)
         
         features_fimbra_wide = [c for c in df_filter_wide.columns if c.endswith('_per_capita')]
@@ -321,7 +321,7 @@ with tabs[1]:
 
         with col_desp_rank:
             # Ranking TOP 10 FIMBRA
-            top_bottom_desp = st.radio("Selecionar Ranking (FIMBRA):", ['Maiores Gastos', 'Menores Gastos'], index=0, horizontal=True, key="rank_fimbra_type")
+            top_bottom_desp = st.radio("Selecionar Ranking (FINBRA):", ['Maiores Gastos', 'Menores Gastos'], index=0, horizontal=True, key="rank_fimbra_type")
             
             df_ranking_desp = df_filter_wide[df_filter_wide[desp_selected] > 0].copy() 
 
@@ -491,6 +491,7 @@ with tabs[2]:
 
     else:
         st.warning("Modelos não encontrados. Execute o run_pipeline.py para treinar e serializar os modelos.")
+
 
 
 
