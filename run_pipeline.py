@@ -12,7 +12,7 @@ def executar_pipeline_completo():
     """Executa o pipeline de MLOps: Ingestão -> Processamento -> Modelagem."""
     
     print("=============================================")
-    print("=== INICIANDO PIPELINE MLOPS: FIMBRA x ENEM ===")
+    print("=== INICIANDO PIPELINE MLOPS: FINBRA x ENEM ===")
     print("=============================================")
 
     # 1. INGESTÃO: Carrega os dados brutos, faz o merge e retorna 2 DFs (df_long e df_filters)
@@ -40,4 +40,5 @@ def executar_pipeline_completo():
 
 
 if __name__ == '__main__':
+
     executar_pipeline_completo()
