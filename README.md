@@ -1,4 +1,4 @@
-# streamlit_fimbra_enem
+# streamlit_finbra_enem
 
 # Projeto Disciplinar: MLOps – Impacto dos Gastos Públicos no Desempenho do ENEM
 
@@ -12,7 +12,7 @@ Analisar e quantificar em que medida as despesas anuais por habitante (*per capi
 
 O projeto foi estruturado utilizando princípios de **MLOps**, dividindo a lógica em módulos independentes para garantir escalabilidade e reprodutibilidade:
 
-* **Ingestão (`data_ingestion.py`):** Conexão com banco de dados PostgreSQL para extração e integração das bases **FIMBRA**, **ENEM**, **IBGE** e **População**.
+* **Ingestão (`data_ingestion.py`):** Conexão com banco de dados PostgreSQL para extração e integração das bases **FINBRA**, **ENEM**, **IBGE** e **População**.
 * **Processamento (`data_processing.py`):** ETL avançado incluindo pivotagem de dados (Long para Wide), tratamento de valores ausentes, análise de multicolinearidade (**VIF**) e padronização robusta com `QuantileTransformer`.
 * **Modelagem (`modeling.py`):** Treinamento comparativo entre modelos de regressão (**OLS**, **Gradient Boosting** e **Random Forest**) com amostragem estratificada.
 * **Pipeline (`run_pipeline.py`):** Orquestração completa do fluxo, desde o dado bruto até a serialização do modelo vencedor.
